@@ -1,0 +1,35 @@
+# Vivado generated state
+.Xil/
+*.jou
+*.log
+*.backup.log
+*.str
+*.pb
+*.wdb
+*.wcfg
+*.rpt
+*.dcp
+*.bit
+*.ltx
+*.mcs
+*.prm
+*.exit
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.srcs/
+
+# Project-specific generated folders
+EO_IR_HDSDI_LineBuffer_FRAMESIZE.cache/
+EO_IR_HDSDI_LineBuffer_FRAMESIZE.hw/
+EO_IR_HDSDI_LineBuffer_FRAMESIZE.ip_user_files/
+EO_IR_HDSDI_LineBuffer_FRAMESIZE.runs/
+EO_IR_HDSDI_LineBuffer_FRAMESIZE.sim/
+EO_IR_HDSDI_LineBuffer_FRAMESIZE.srcs/
+batch_build/
+
+# Local/runtime files
+dfx_runtime.txt
+probe_*.tcl
