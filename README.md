@@ -20,7 +20,9 @@ Vivado project for the BRAM/UltraRAM fallback design that combines the previousl
 
 - No DDR is used in this design.
 - EO stack stores 640x480 tiles for each camera, packing the 8-bit Y/C samples into 16-bit BRAM entries and restoring the 20-bit output word on read.
-- IR stack stores 540x480 tiles for each camera, with zero-luma black padding to the right of the 3-column stack.
+- EO stack preserves aspect ratio by sampling a centered 1440x1080 crop of each 1920x1080 EO input at 4-of-9 in Y and 4-of-9 source chroma pairs in X, producing 640x480 tiles while keeping Cb/Cr cadence.
+- IR stack stores 540x480 tiles for each camera, preserving aspect ratio by sampling a centered 576x512 crop at 15-of-16 in X/Y.
+- IR stack uses zero-luma black padding to the right of the 3-column stack.
 - Camera clock domains cross into the common render clock using async FIFOs where required.
 - EO camera 0 bypasses the async FIFO because its write clock and render clock share the same source; this avoids Vivado bitgen DRC failures on independent-clock FIFO usage with identical clocks.
 

@@ -24,17 +24,23 @@ module EO1920x1080_Decimate3_FrameBuffer #(
     localparam integer PACKED_PIXEL_W = 16;
     localparam integer FRAME_BITS   = FRAME_PIXELS * PACKED_PIXEL_W;
     localparam integer FIFO_WIDTH   = 1 + FRAME_ADDR_W + PACKED_PIXEL_W;
+    localparam integer CROP_X_START = 240;
+    localparam integer CROP_X_WIDTH = (SRC_W * 9) / 4;
+    localparam integer CROP_X_END   = CROP_X_START + CROP_X_WIDTH;
 
     reg [FRAME_ADDR_W-1:0] wr_addr;
     reg                    wr_hsync_d;
     reg                    wr_vsync_d;
-    reg [1:0]              wr_x_mod;
+    reg [11:0]             wr_x;
+    reg [3:0]              wr_x_phase;
     reg [3:0]              wr_y_phase;
     wire                   wr_frame_active;
     wire                   wr_frame_start;
     wire                   wr_line_end;
     wire                   wr_fifo_full;
     wire                   wr_sample_now;
+    wire                   wr_x_in_crop;
+    wire                   wr_x_sample;
     wire                   wr_y_sample;
     wire [FIFO_WIDTH-1:0]  wr_fifo_din;
     wire                   mem_wr_en;
@@ -47,10 +53,15 @@ module EO1920x1080_Decimate3_FrameBuffer #(
     assign wr_frame_active = ~wr_vsync;
     assign wr_frame_start  = wr_vsync_d && ~wr_vsync;
     assign wr_line_end     = wr_hsync_d && ~wr_hsync && wr_frame_active;
+    assign wr_x_in_crop   = (wr_x >= CROP_X_START) && (wr_x < CROP_X_END);
+    // Select whole Y/C chroma pairs so the stacked output keeps Cb/Cr cadence.
+    assign wr_x_sample    = wr_x_in_crop &&
+                            ((wr_x_phase == 4'd0) || (wr_x_phase == 4'd2) ||
+                             (wr_x_phase == 4'd4) || (wr_x_phase == 4'd6));
     assign wr_y_sample    = (wr_y_phase == 4'd0) || (wr_y_phase == 4'd2) ||
                             (wr_y_phase == 4'd4) || (wr_y_phase == 4'd6);
     assign wr_sample_now   = wr_frame_active && wr_hsync &&
-                             wr_y_sample && (wr_x_mod == 2'd0) &&
+                             wr_y_sample && wr_x_sample &&
                              (wr_addr < FRAME_PIXELS) && !wr_fifo_full;
     assign wr_fifo_din     = {(wr_addr == (FRAME_PIXELS - 1)), wr_addr, wr_pixel_packed};
 
@@ -59,15 +70,17 @@ module EO1920x1080_Decimate3_FrameBuffer #(
             wr_addr           <= {FRAME_ADDR_W{1'b0}};
             wr_hsync_d        <= 1'b0;
             wr_vsync_d        <= 1'b0;
-            wr_x_mod          <= 2'd0;
+            wr_x              <= 12'd0;
+            wr_x_phase        <= 4'd0;
             wr_y_phase        <= 4'd0;
         end else begin
             wr_hsync_d <= wr_hsync;
             wr_vsync_d <= wr_vsync;
 
             if (wr_frame_start) begin
-                wr_addr  <= {FRAME_ADDR_W{1'b0}};
-                wr_x_mod <= 2'd0;
+                wr_addr     <= {FRAME_ADDR_W{1'b0}};
+                wr_x        <= 12'd0;
+                wr_x_phase  <= 4'd0;
                 wr_y_phase <= 4'd0;
             end
 
@@ -76,14 +89,19 @@ module EO1920x1080_Decimate3_FrameBuffer #(
                     wr_addr <= wr_addr + {{(FRAME_ADDR_W-1){1'b0}}, 1'b1};
                 end
 
-                if (wr_x_mod == 2'd2)
-                    wr_x_mod <= 2'd0;
-                else
-                    wr_x_mod <= wr_x_mod + 2'd1;
+                if (wr_x_in_crop && wr_x[0]) begin
+                    if (wr_x_phase == 4'd8)
+                        wr_x_phase <= 4'd0;
+                    else
+                        wr_x_phase <= wr_x_phase + 4'd1;
+                end
+
+                wr_x <= wr_x + 12'd1;
             end
 
             if (wr_line_end) begin
-                wr_x_mod <= 2'd0;
+                wr_x       <= 12'd0;
+                wr_x_phase <= 4'd0;
                 if (wr_y_phase == 4'd8)
                     wr_y_phase <= 4'd0;
                 else

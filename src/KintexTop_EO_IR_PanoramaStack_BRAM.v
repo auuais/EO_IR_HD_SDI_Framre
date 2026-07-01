@@ -554,13 +554,19 @@ module IR540x480_GrayFrameBuffer #(
     localparam integer FRAME_WORDS  = FRAME_PIXELS / 8;
     localparam integer FRAME_BITS   = FRAME_WORDS * 64;
     localparam integer FIFO_WIDTH   = 1 + 1 + FRAME_ADDR_W + 8;
+    localparam integer IR_IN_H      = 512;
+    localparam integer CROP_X_START = 32;
+    localparam integer CROP_X_WIDTH = (SRC_W * 16) / 15;
+    localparam integer CROP_X_END   = CROP_X_START + CROP_X_WIDTH;
 
     reg [FRAME_ADDR_W-1:0] wr_addr;
     reg                    wr_bank;
     reg                    wr_hsync_d;
     reg                    wr_vsync_d;
     reg [9:0]              wr_x;
-    reg [8:0]              wr_y;
+    reg [9:0]              wr_y;
+    reg [3:0]              wr_x_phase;
+    reg [3:0]              wr_y_phase;
     reg rd_bank;
     reg pending_bank;
     reg pending_valid;
@@ -578,6 +584,9 @@ module IR540x480_GrayFrameBuffer #(
     wire       wr_frame_start;
     wire       wr_frame_end;
     wire       wr_line_end;
+    wire       wr_x_in_crop;
+    wire       wr_x_sample;
+    wire       wr_y_sample;
     wire [FIFO_WIDTH-1:0] wr_fifo_din;
     wire [FIFO_WIDTH-1:0] rd_fifo_dout;
     wire       rd_fifo_empty;
@@ -595,8 +604,11 @@ module IR540x480_GrayFrameBuffer #(
     assign wr_frame_start = wr_vsync && !wr_vsync_d;
     assign wr_frame_end   = !wr_vsync && wr_vsync_d;
     assign wr_line_end    = wr_vsync && wr_hsync_d && !wr_hsync;
+    assign wr_x_in_crop   = (wr_x >= CROP_X_START) && (wr_x < CROP_X_END);
+    assign wr_x_sample    = wr_x_in_crop && (wr_x_phase != 4'd15);
+    assign wr_y_sample    = (wr_y < IR_IN_H) && (wr_y_phase != 4'd15);
     assign wr_sample_now  = wr_vsync && wr_hsync &&
-                            (wr_x < SRC_W) && (wr_y < SRC_H) &&
+                            wr_x_sample && wr_y_sample &&
                             (wr_addr < FRAME_PIXELS) && !wr_fifo_full;
     assign wr_fifo_din    = {(wr_addr == (FRAME_PIXELS - 1)), wr_bank, wr_addr, wr_pixel};
     assign rd_fifo_pop    = !rd_fifo_empty;
@@ -644,7 +656,9 @@ module IR540x480_GrayFrameBuffer #(
             wr_hsync_d        <= 1'b0;
             wr_vsync_d        <= 1'b0;
             wr_x              <= 10'd0;
-            wr_y              <= 9'd0;
+            wr_y              <= 10'd0;
+            wr_x_phase        <= 4'd0;
+            wr_y_phase        <= 4'd0;
         end else begin
             wr_hsync_d <= wr_hsync;
             wr_vsync_d <= wr_vsync;
@@ -652,18 +666,33 @@ module IR540x480_GrayFrameBuffer #(
             if (wr_frame_start) begin
                 wr_addr <= {FRAME_ADDR_W{1'b0}};
                 wr_x    <= 10'd0;
-                wr_y    <= 9'd0;
+                wr_y    <= 10'd0;
+                wr_x_phase <= 4'd0;
+                wr_y_phase <= 4'd0;
             end else begin
-                if (wr_vsync && wr_hsync)
+                if (wr_vsync && wr_hsync) begin
+                    if (wr_x_in_crop) begin
+                        if (wr_x_phase == 4'd15)
+                            wr_x_phase <= 4'd0;
+                        else
+                            wr_x_phase <= wr_x_phase + 4'd1;
+                    end
                     wr_x <= wr_x + 10'd1;
+                end
 
                 if (wr_sample_now)
                     wr_addr <= wr_addr + {{(FRAME_ADDR_W-1){1'b0}}, 1'b1};
 
                 if (wr_line_end) begin
-                    wr_x <= 10'd0;
-                    if (wr_y < SRC_H)
-                        wr_y <= wr_y + 9'd1;
+                    wr_x       <= 10'd0;
+                    wr_x_phase <= 4'd0;
+                    if (wr_y < IR_IN_H) begin
+                        wr_y <= wr_y + 10'd1;
+                        if (wr_y_phase == 4'd15)
+                            wr_y_phase <= 4'd0;
+                        else
+                            wr_y_phase <= wr_y_phase + 4'd1;
+                    end
                 end
             end
 
@@ -855,12 +884,18 @@ module IR540x480_GrayFrameBuffer_Single #(
 );
     localparam integer FRAME_PIXELS = SRC_W * SRC_H;
     localparam integer FRAME_BITS   = FRAME_PIXELS * 8;
+    localparam integer IR_IN_H      = 512;
+    localparam integer CROP_X_START = 32;
+    localparam integer CROP_X_WIDTH = (SRC_W * 16) / 15;
+    localparam integer CROP_X_END   = CROP_X_START + CROP_X_WIDTH;
 
     reg [FRAME_ADDR_W-1:0] wr_addr;
     reg                    wr_hsync_d;
     reg                    wr_vsync_d;
     reg [9:0]              wr_x;
-    reg [8:0]              wr_y;
+    reg [9:0]              wr_y;
+    reg [3:0]              wr_x_phase;
+    reg [3:0]              wr_y_phase;
     reg                    wr_en;
     reg                    frame_toggle_wr;
     reg                    frame_toggle_meta;
@@ -870,8 +905,11 @@ module IR540x480_GrayFrameBuffer_Single #(
     wire wr_frame_start = wr_vsync && !wr_vsync_d;
     wire wr_frame_end   = !wr_vsync && wr_vsync_d;
     wire wr_line_end    = wr_vsync && wr_hsync_d && !wr_hsync;
+    wire wr_x_in_crop   = (wr_x >= CROP_X_START) && (wr_x < CROP_X_END);
+    wire wr_x_sample    = wr_x_in_crop && (wr_x_phase != 4'd15);
+    wire wr_y_sample    = (wr_y < IR_IN_H) && (wr_y_phase != 4'd15);
     wire wr_sample_now  = wr_vsync && wr_hsync &&
-                          (wr_x < SRC_W) && (wr_y < SRC_H) &&
+                          wr_x_sample && wr_y_sample &&
                           (wr_addr < FRAME_PIXELS);
 
     always @(posedge wr_clk) begin
@@ -880,7 +918,9 @@ module IR540x480_GrayFrameBuffer_Single #(
             wr_hsync_d      <= 1'b0;
             wr_vsync_d      <= 1'b0;
             wr_x            <= 10'd0;
-            wr_y            <= 9'd0;
+            wr_y            <= 10'd0;
+            wr_x_phase      <= 4'd0;
+            wr_y_phase      <= 4'd0;
             wr_en           <= 1'b0;
             frame_toggle_wr <= 1'b0;
         end else begin
@@ -891,10 +931,19 @@ module IR540x480_GrayFrameBuffer_Single #(
             if (wr_frame_start) begin
                 wr_addr <= {FRAME_ADDR_W{1'b0}};
                 wr_x    <= 10'd0;
-                wr_y    <= 9'd0;
+                wr_y    <= 10'd0;
+                wr_x_phase <= 4'd0;
+                wr_y_phase <= 4'd0;
             end else begin
-                if (wr_vsync && wr_hsync)
+                if (wr_vsync && wr_hsync) begin
+                    if (wr_x_in_crop) begin
+                        if (wr_x_phase == 4'd15)
+                            wr_x_phase <= 4'd0;
+                        else
+                            wr_x_phase <= wr_x_phase + 4'd1;
+                    end
                     wr_x <= wr_x + 10'd1;
+                end
 
                 if (wr_sample_now) begin
                     wr_en   <= 1'b1;
@@ -902,9 +951,15 @@ module IR540x480_GrayFrameBuffer_Single #(
                 end
 
                 if (wr_line_end) begin
-                    wr_x <= 10'd0;
-                    if (wr_y < SRC_H)
-                        wr_y <= wr_y + 9'd1;
+                    wr_x       <= 10'd0;
+                    wr_x_phase <= 4'd0;
+                    if (wr_y < IR_IN_H) begin
+                        wr_y <= wr_y + 10'd1;
+                        if (wr_y_phase == 4'd15)
+                            wr_y_phase <= 4'd0;
+                        else
+                            wr_y_phase <= wr_y_phase + 4'd1;
+                    end
                 end
             end
 
@@ -1261,6 +1316,10 @@ module IR540x480_To_HD1080p_Buffered(
     localparam integer FRAME_ADDR_W  = 18;   // ceil(log2(259200))
     localparam integer FRAME_BITS    = FRAME_PIXELS * 8;
     localparam integer READ_LATENCY  = 2;
+    localparam integer IR_IN_H       = 512;
+    localparam integer CROP_X_START  = 32;
+    localparam integer CROP_X_WIDTH  = (SRC_W * 16) / 15;
+    localparam integer CROP_X_END    = CROP_X_START + CROP_X_WIDTH;
 
     localparam integer HD_ACTIVE_W   = 1920;
     localparam integer HD_ACTIVE_H   = 1080;
@@ -1276,7 +1335,9 @@ module IR540x480_To_HD1080p_Buffered(
     reg                    wr_hsync_d;
     reg                    wr_vsync_d;
     reg [9:0]              wr_x;
-    reg [8:0]              wr_y;
+    reg [9:0]              wr_y;
+    reg [3:0]              wr_x_phase;
+    reg [3:0]              wr_y_phase;
     reg                    frame_toggle_wr;
     reg                    completed_bank_wr;
     reg                    wr_en_buf0;
@@ -1285,8 +1346,11 @@ module IR540x480_To_HD1080p_Buffered(
     wire wr_frame_start = wr_vsync && !wr_vsync_d;
     wire wr_frame_end   = !wr_vsync && wr_vsync_d;
     wire wr_line_end    = wr_vsync && wr_hsync_d && !wr_hsync;
+    wire wr_x_in_crop   = (wr_x >= CROP_X_START) && (wr_x < CROP_X_END);
+    wire wr_x_sample    = wr_x_in_crop && (wr_x_phase != 4'd15);
+    wire wr_y_sample    = (wr_y < IR_IN_H) && (wr_y_phase != 4'd15);
     wire wr_sample_now  = wr_vsync && wr_hsync &&
-                          (wr_x < SRC_W) && (wr_y < SRC_H) &&
+                          wr_x_sample && wr_y_sample &&
                           (wr_addr < FRAME_PIXELS);
 
     // Capture the 540x480 left/top crop from the selected IR active region.
@@ -1297,7 +1361,9 @@ module IR540x480_To_HD1080p_Buffered(
             wr_hsync_d        <= 1'b0;
             wr_vsync_d        <= 1'b0;
             wr_x              <= 10'd0;
-            wr_y              <= 9'd0;
+            wr_y              <= 10'd0;
+            wr_x_phase        <= 4'd0;
+            wr_y_phase        <= 4'd0;
             frame_toggle_wr   <= 1'b0;
             completed_bank_wr <= 1'b0;
             wr_en_buf0        <= 1'b0;
@@ -1311,10 +1377,19 @@ module IR540x480_To_HD1080p_Buffered(
             if (wr_frame_start) begin
                 wr_addr <= {FRAME_ADDR_W{1'b0}};
                 wr_x    <= 10'd0;
-                wr_y    <= 9'd0;
+                wr_y    <= 10'd0;
+                wr_x_phase <= 4'd0;
+                wr_y_phase <= 4'd0;
             end else begin
-                if (wr_vsync && wr_hsync)
+                if (wr_vsync && wr_hsync) begin
+                    if (wr_x_in_crop) begin
+                        if (wr_x_phase == 4'd15)
+                            wr_x_phase <= 4'd0;
+                        else
+                            wr_x_phase <= wr_x_phase + 4'd1;
+                    end
                     wr_x <= wr_x + 10'd1;
+                end
 
                 if (wr_sample_now) begin
                     if (wr_bank == 1'b0)
@@ -1325,9 +1400,15 @@ module IR540x480_To_HD1080p_Buffered(
                 end
 
                 if (wr_line_end) begin
-                    wr_x <= 10'd0;
-                    if (wr_y < SRC_H)
-                        wr_y <= wr_y + 9'd1;
+                    wr_x       <= 10'd0;
+                    wr_x_phase <= 4'd0;
+                    if (wr_y < IR_IN_H) begin
+                        wr_y <= wr_y + 10'd1;
+                        if (wr_y_phase == 4'd15)
+                            wr_y_phase <= 4'd0;
+                        else
+                            wr_y_phase <= wr_y_phase + 4'd1;
+                    end
                 end
             end
 
