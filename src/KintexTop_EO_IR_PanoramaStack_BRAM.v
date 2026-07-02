@@ -788,6 +788,10 @@ module IR540x480_GrayFrameBuffer #(
     reg [9:0]              wr_y;
     reg [3:0]              wr_x_phase;
     reg [3:0]              wr_y_phase;
+    reg                    wr_have_prev_line;
+    reg [7:0]              wr_pixel_left;
+    reg [7:0]              wr_pixel_above_left;
+    (* ram_style = "distributed" *) reg [7:0] wr_prev_line_pixel [0:1023];
     reg rd_bank;
     reg pending_bank;
     reg pending_valid;
@@ -809,6 +813,12 @@ module IR540x480_GrayFrameBuffer #(
     wire       wr_x_sample;
     wire       wr_y_sample;
     wire [FIFO_WIDTH-1:0] wr_fifo_din;
+    wire [7:0] wr_pixel_above_raw;
+    wire       wr_left_valid;
+    wire [7:0] wr_pixel_left_eff;
+    wire [7:0] wr_pixel_above_eff;
+    wire [7:0] wr_pixel_above_left_eff;
+    wire [7:0] wr_pixel_filtered;
     wire [FIFO_WIDTH-1:0] rd_fifo_dout;
     wire       rd_fifo_empty;
     wire       rd_fifo_pop;
@@ -831,7 +841,14 @@ module IR540x480_GrayFrameBuffer #(
     assign wr_sample_now  = wr_vsync && wr_hsync &&
                             wr_x_sample && wr_y_sample &&
                             (wr_addr < FRAME_PIXELS) && !wr_fifo_full;
-    assign wr_fifo_din    = {(wr_addr == (FRAME_PIXELS - 1)), wr_bank, wr_addr, wr_pixel};
+    assign wr_pixel_above_raw      = wr_prev_line_pixel[wr_x];
+    assign wr_left_valid           = (wr_x > CROP_X_START);
+    assign wr_pixel_left_eff       = wr_left_valid ? wr_pixel_left : wr_pixel;
+    assign wr_pixel_above_eff      = wr_have_prev_line ? wr_pixel_above_raw : wr_pixel;
+    assign wr_pixel_above_left_eff = (wr_have_prev_line && wr_left_valid) ? wr_pixel_above_left : wr_pixel_left_eff;
+    assign wr_pixel_filtered       = avg4_u8(wr_pixel, wr_pixel_left_eff,
+                                             wr_pixel_above_eff, wr_pixel_above_left_eff);
+    assign wr_fifo_din    = {(wr_addr == (FRAME_PIXELS - 1)), wr_bank, wr_addr, wr_pixel_filtered};
     assign rd_fifo_pop    = !rd_fifo_empty;
     assign rd_fifo_last   = rd_fifo_dout[FIFO_WIDTH-1];
     assign rd_fifo_bank   = rd_fifo_dout[FIFO_WIDTH-2];
@@ -842,6 +859,18 @@ module IR540x480_GrayFrameBuffer #(
     assign rd_fifo_word_done = rd_fifo_pop && (rd_fifo_addr[2:0] == 3'd7);
     assign rd_word_selected = rd_bank_pipe[READ_LATENCY-1] ? rd_word_buf1 : rd_word_buf0;
     assign rd_byte_selected = rd_byte_pipe[(3*READ_LATENCY)-1 -: 3];
+
+    function [7:0] avg4_u8;
+        input [7:0] a;
+        input [7:0] b;
+        input [7:0] c;
+        input [7:0] d;
+        reg [9:0] sum;
+        begin
+            sum = {2'b0, a} + {2'b0, b} + {2'b0, c} + {2'b0, d} + 10'd2;
+            avg4_u8 = sum[9:2];
+        end
+    endfunction
 
     always @* begin
         pack_word_next = pack_word;
@@ -880,18 +909,28 @@ module IR540x480_GrayFrameBuffer #(
             wr_y              <= 10'd0;
             wr_x_phase        <= 4'd0;
             wr_y_phase        <= 4'd0;
+            wr_have_prev_line <= 1'b0;
+            wr_pixel_left     <= 8'd0;
+            wr_pixel_above_left <= 8'd0;
         end else begin
             wr_hsync_d <= wr_hsync;
             wr_vsync_d <= wr_vsync;
 
             if (wr_frame_start) begin
-                wr_addr <= {FRAME_ADDR_W{1'b0}};
-                wr_x    <= 10'd0;
-                wr_y    <= 10'd0;
-                wr_x_phase <= 4'd0;
-                wr_y_phase <= 4'd0;
+                wr_addr             <= {FRAME_ADDR_W{1'b0}};
+                wr_x                <= 10'd0;
+                wr_y                <= 10'd0;
+                wr_x_phase          <= 4'd0;
+                wr_y_phase          <= 4'd0;
+                wr_have_prev_line   <= 1'b0;
+                wr_pixel_left       <= 8'd0;
+                wr_pixel_above_left <= 8'd0;
             end else begin
                 if (wr_vsync && wr_hsync) begin
+                    wr_prev_line_pixel[wr_x] <= wr_pixel;
+                    wr_pixel_left            <= wr_pixel;
+                    wr_pixel_above_left      <= wr_pixel_above_raw;
+
                     if (wr_x_in_crop) begin
                         if (wr_x_phase == 4'd15)
                             wr_x_phase <= 4'd0;
@@ -905,8 +944,11 @@ module IR540x480_GrayFrameBuffer #(
                     wr_addr <= wr_addr + {{(FRAME_ADDR_W-1){1'b0}}, 1'b1};
 
                 if (wr_line_end) begin
-                    wr_x       <= 10'd0;
-                    wr_x_phase <= 4'd0;
+                    wr_x                <= 10'd0;
+                    wr_x_phase          <= 4'd0;
+                    wr_have_prev_line   <= 1'b1;
+                    wr_pixel_left       <= 8'd0;
+                    wr_pixel_above_left <= 8'd0;
                     if (wr_y < IR_IN_H) begin
                         wr_y <= wr_y + 10'd1;
                         if (wr_y_phase == 4'd15)

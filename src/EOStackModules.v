@@ -34,6 +34,10 @@ module EO1920x1080_Decimate3_FrameBuffer #(
     reg [11:0]             wr_x;
     reg [3:0]              wr_x_phase;
     reg [3:0]              wr_y_phase;
+    reg                    wr_have_prev_line;
+    reg [7:0]              wr_y_left;
+    reg [7:0]              wr_y_above_left;
+    (* ram_style = "distributed" *) reg [7:0] wr_prev_line_y [0:2047];
     wire                   wr_frame_active;
     wire                   wr_frame_start;
     wire                   wr_line_end;
@@ -48,8 +52,34 @@ module EO1920x1080_Decimate3_FrameBuffer #(
     wire [PACKED_PIXEL_W-1:0] mem_wr_pixel;
     wire                   frame_complete_rd;
     wire [PACKED_PIXEL_W-1:0] wr_pixel_packed;
+    wire [7:0]             wr_y_cur;
+    wire [7:0]             wr_y_above_raw;
+    wire                   wr_left_valid;
+    wire [7:0]             wr_y_left_eff;
+    wire [7:0]             wr_y_above_eff;
+    wire [7:0]             wr_y_above_left_eff;
+    wire [7:0]             wr_y_filtered;
 
-    assign wr_pixel_packed = {wr_pixel[19:12], wr_pixel[9:2]};
+    function [7:0] avg4_u8;
+        input [7:0] a;
+        input [7:0] b;
+        input [7:0] c;
+        input [7:0] d;
+        reg [9:0] sum;
+        begin
+            sum = {2'b0, a} + {2'b0, b} + {2'b0, c} + {2'b0, d} + 10'd2;
+            avg4_u8 = sum[9:2];
+        end
+    endfunction
+
+    assign wr_y_cur            = wr_pixel[19:12];
+    assign wr_y_above_raw      = wr_prev_line_y[wr_x[10:0]];
+    assign wr_left_valid       = (wr_x > CROP_X_START);
+    assign wr_y_left_eff       = wr_left_valid ? wr_y_left : wr_y_cur;
+    assign wr_y_above_eff      = wr_have_prev_line ? wr_y_above_raw : wr_y_cur;
+    assign wr_y_above_left_eff = (wr_have_prev_line && wr_left_valid) ? wr_y_above_left : wr_y_left_eff;
+    assign wr_y_filtered       = avg4_u8(wr_y_cur, wr_y_left_eff, wr_y_above_eff, wr_y_above_left_eff);
+    assign wr_pixel_packed     = {wr_y_filtered, wr_pixel[9:2]};
     assign wr_frame_active = ~wr_vsync;
     assign wr_frame_start  = wr_vsync_d && ~wr_vsync;
     assign wr_line_end     = wr_hsync_d && ~wr_hsync && wr_frame_active;
@@ -73,18 +103,28 @@ module EO1920x1080_Decimate3_FrameBuffer #(
             wr_x              <= 12'd0;
             wr_x_phase        <= 4'd0;
             wr_y_phase        <= 4'd0;
+            wr_have_prev_line <= 1'b0;
+            wr_y_left         <= 8'd0;
+            wr_y_above_left   <= 8'd0;
         end else begin
             wr_hsync_d <= wr_hsync;
             wr_vsync_d <= wr_vsync;
 
             if (wr_frame_start) begin
-                wr_addr     <= {FRAME_ADDR_W{1'b0}};
-                wr_x        <= 12'd0;
-                wr_x_phase  <= 4'd0;
-                wr_y_phase <= 4'd0;
+                wr_addr           <= {FRAME_ADDR_W{1'b0}};
+                wr_x              <= 12'd0;
+                wr_x_phase        <= 4'd0;
+                wr_y_phase        <= 4'd0;
+                wr_have_prev_line <= 1'b0;
+                wr_y_left         <= 8'd0;
+                wr_y_above_left   <= 8'd0;
             end
 
             if (wr_frame_active && wr_hsync) begin
+                wr_prev_line_y[wr_x[10:0]] <= wr_y_cur;
+                wr_y_left                  <= wr_y_cur;
+                wr_y_above_left            <= wr_y_above_raw;
+
                 if (wr_sample_now) begin
                     wr_addr <= wr_addr + {{(FRAME_ADDR_W-1){1'b0}}, 1'b1};
                 end
@@ -100,8 +140,11 @@ module EO1920x1080_Decimate3_FrameBuffer #(
             end
 
             if (wr_line_end) begin
-                wr_x       <= 12'd0;
-                wr_x_phase <= 4'd0;
+                wr_x              <= 12'd0;
+                wr_x_phase        <= 4'd0;
+                wr_have_prev_line <= 1'b1;
+                wr_y_left         <= 8'd0;
+                wr_y_above_left   <= 8'd0;
                 if (wr_y_phase == 4'd8)
                     wr_y_phase <= 4'd0;
                 else
