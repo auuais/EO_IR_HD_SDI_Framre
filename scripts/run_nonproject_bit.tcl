@@ -13,7 +13,6 @@ read_verilog [list \
     [file join $project_root src Kintex_top_3cam_ch1_1202.v] \
     [file join $project_root src Kintex_top_4cam_ch1_1202.v] \
     [file join $project_root src Kintex_top_5cam_ch1_1202.v] \
-    [file join $project_root src LineBufferStackModules.v] \
     [file join $project_root src EOStackModules.v] \
     [file join $project_root src KintexTop_EO_IR_PanoramaStack_BRAM.v] \
 ]

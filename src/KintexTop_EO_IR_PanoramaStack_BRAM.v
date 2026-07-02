@@ -356,29 +356,18 @@ module KintexTop_EO_IR_Combined_HD_SDI(
                                (eo_sel == 3'd3) ? eo3_dout :
                                (eo_sel == 3'd4) ? eo4_dout : eo5_dout;
 
-    wire        eo_single_hd_de;
-    wire        eo_single_hd_hsync;
-    wire        eo_single_hd_vsync;
-    wire [19:0] eo_single_hd_dout;
     wire        eo_stack_hd_de;
     wire        eo_stack_hd_hsync;
     wire        eo_stack_hd_vsync;
     wire [19:0] eo_stack_hd_dout;
 
-    EO1920x1080_To_HD1080p_LineBuffered u_eo_single_to_hd (
-        .rst_n   (nRESET && eo_single_mode_active),
-        .wr_clk  (EO_SEL_PCLK_BUFG),
-        .wr_hsync(EO_SEL_HSYNC),
-        .wr_vsync(EO_SEL_VSYNC),
-        .wr_pixel(EO_SEL_DOUT),
-        .rd_clk  (CAM0_PCLK_bufg),
-        .hd_de   (eo_single_hd_de),
-        .hd_hsync(eo_single_hd_hsync),
-        .hd_vsync(eo_single_hd_vsync),
-        .hd_dout (eo_single_hd_dout)
-    );
+    // EO single-camera mode is a zero-latency direct passthrough of the selected
+    // camera on its own pixel clock (driven in the HD_* output mux below).
+    // Buffering a single 1920x1080 stream adds latency and, because the selected
+    // camera's PCLK is not the HD read clock, introduces chroma-phase (Cb/Cr =
+    // red/blue) and raster-offset drift. Passthrough avoids all of that.
 
-    EO6Stack_To_HD1080p_LineBuffered u_eo_stack_to_hd (
+    EO6Stack_To_HD1080p_Buffered u_eo_stack_to_hd (
         .rst_n        (nRESET),
         .rd_clk       (CAM0_PCLK_bufg),
         .cam0_wr_clk  (eo0_pclk),
@@ -452,35 +441,23 @@ module KintexTop_EO_IR_Combined_HD_SDI(
     assign IEG1_VSYNC = ir_single_mode_active ? IR_SEL_VSYNC     : 1'b0;
     assign IEG1_DOUT  = ir_single_mode_active ? IR_SEL_DOUT      : 20'h0;
 
-    wire        ir_single_hd_de;
-    wire        ir_single_hd_hsync;
-    wire        ir_single_hd_vsync;
-    wire [19:0] ir_single_hd_dout;
-    wire        ir_stack_hd_de;
-    wire        ir_stack_hd_hsync;
-    wire        ir_stack_hd_vsync;
-    wire [19:0] ir_stack_hd_dout;
-    wire        ir_hd_de    = ir_stack_mode_active ? ir_stack_hd_de    : ir_single_hd_de;
-    wire        ir_hd_hsync = ir_stack_mode_active ? ir_stack_hd_hsync : ir_single_hd_hsync;
-    wire        ir_hd_vsync = ir_stack_mode_active ? ir_stack_hd_vsync : ir_single_hd_vsync;
-    wire [19:0] ir_hd_dout  = ir_stack_mode_active ? ir_stack_hd_dout  : ir_single_hd_dout;
+    // For IR modes, capture all IR frames into shared per-camera double
+    // buffers and render either:
+    // - a single selected camera centered in the 1920x1080 raster, or
+    // - the 2x3 IR stack layout.
+    // Spatial (x,y) addressing makes the output immune to per-camera clock
+    // drift; the FPGA-generated genlock strobe (IRCAMx_GENLOCK) frame-aligns
+    // the sensors so the shared buffers stay tear-free.
+    wire        ir_hd_de;
+    wire        ir_hd_hsync;
+    wire        ir_hd_vsync;
+    wire [19:0] ir_hd_dout;
 
-    IR540x480_To_HD1080p_LineBuffered u_ir_single_to_hd (
-        .rst_n   (nRESET && ir_single_mode_active),
-        .wr_clk  (IR_SEL_PCLK_BUFG),
-        .wr_hsync(IR_SEL_HSYNC),
-        .wr_vsync(IR_SEL_VSYNC),
-        .wr_pixel(IR_SEL_GRAY),
-        .rd_clk  (CAM0_PCLK_bufg),
-        .hd_de   (ir_single_hd_de),
-        .hd_hsync(ir_single_hd_hsync),
-        .hd_vsync(ir_single_hd_vsync),
-        .hd_dout (ir_single_hd_dout)
-    );
-
-    IR6Stack_To_HD1080p_LineBuffered u_ir_stack_to_hd (
+    IR6Modes_To_HD1080p_Buffered u_ir_modes_to_hd (
         .rst_n        (nRESET),
         .rd_clk       (CAM0_PCLK_bufg),
+        .stack_mode   (ir_stack_mode_active),
+        .single_sel   (ir_sel),
         .cam0_wr_clk  (IRCAM0_PCLK_bufg),
         .cam0_wr_hsync(IRCAM0_HSYNC_1d),
         .cam0_wr_vsync(IRCAM0_VSYNC_1d),
@@ -505,25 +482,25 @@ module KintexTop_EO_IR_Combined_HD_SDI(
         .cam5_wr_hsync(IRCAM5_HSYNC_1d),
         .cam5_wr_vsync(IRCAM5_VSYNC_1d),
         .cam5_wr_pixel(IRCAM5_DOUT_1d[13:6]),
-        .hd_de        (ir_stack_hd_de),
-        .hd_hsync     (ir_stack_hd_hsync),
-        .hd_vsync     (ir_stack_hd_vsync),
-        .hd_dout      (ir_stack_hd_dout)
+        .hd_de        (ir_hd_de),
+        .hd_hsync     (ir_hd_hsync),
+        .hd_vsync     (ir_hd_vsync),
+        .hd_dout      (ir_hd_dout)
     );
 
-    assign HD_PCLK  = eo_single_mode_active ? CAM0_PCLK_bufg     :
+    assign HD_PCLK  = eo_single_mode_active ? EO_SEL_PCLK_BUFG   :
                       eo_stack_mode_active  ? CAM0_PCLK_bufg     :
                       ir_mode_active        ? CAM0_PCLK_bufg     : 1'b0;
-    assign HD_DE    = eo_single_mode_active ? eo_single_hd_de    :
+    assign HD_DE    = eo_single_mode_active ? EO_SEL_HSYNC       :
                       eo_stack_mode_active  ? eo_stack_hd_de     :
                       ir_mode_active        ? ir_hd_de           : 1'b0;
-    assign HD_HSYNC = eo_single_mode_active ? eo_single_hd_hsync :
+    assign HD_HSYNC = eo_single_mode_active ? EO_SEL_HSYNC       :
                       eo_stack_mode_active  ? eo_stack_hd_hsync  :
                       ir_mode_active        ? ir_hd_hsync        : 1'b0;
-    assign HD_VSYNC = eo_single_mode_active ? eo_single_hd_vsync :
+    assign HD_VSYNC = eo_single_mode_active ? EO_SEL_VSYNC       :
                       eo_stack_mode_active  ? eo_stack_hd_vsync  :
                       ir_mode_active        ? ir_hd_vsync        : 1'b0;
-    assign HD_DOUT  = eo_single_mode_active ? eo_single_hd_dout  :
+    assign HD_DOUT  = eo_single_mode_active ? EO_SEL_DOUT        :
                       eo_stack_mode_active  ? eo_stack_hd_dout   :
                       ir_mode_active        ? ir_hd_dout         : 20'h0;
 
