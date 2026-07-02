@@ -178,6 +178,7 @@ module KintexTop_EO_IR_Combined_HD_SDI(
     // ------------------------------------------------------------------------
     wire [3:0] cam_select_unused;
     wire [7:0] mode_current;
+    wire [127:0] i2c_debug_status;
 
     Kintex_top_I2C_test #(
         .SLAVE_ADDR(7'h36),
@@ -188,6 +189,7 @@ module KintexTop_EO_IR_Combined_HD_SDI(
         .SCLK_IN   (CAM0_PCLK_ibuf),
         .SCL       (SCL),
         .SDA       (SDA),
+        .debug_status(i2c_debug_status),
         .cam_select(cam_select_unused),
         .mode_out  (mode_current)
     );
@@ -401,6 +403,113 @@ module KintexTop_EO_IR_Combined_HD_SDI(
     );
 
     // ------------------------------------------------------------------------
+    // EO timing diagnostics (I2C read-only registers 0x70..0x7F)
+    // ------------------------------------------------------------------------
+    wire [23:0] eo0_frame_period_src, eo1_frame_period_src, eo2_frame_period_src;
+    wire [23:0] eo3_frame_period_src, eo4_frame_period_src, eo5_frame_period_src;
+    wire        eo0_frame_toggle_src, eo1_frame_toggle_src, eo2_frame_toggle_src;
+    wire        eo3_frame_toggle_src, eo4_frame_toggle_src, eo5_frame_toggle_src;
+    wire [23:0] eo0_frame_period_cam0, eo1_frame_period_cam0, eo2_frame_period_cam0;
+    wire [23:0] eo3_frame_period_cam0, eo4_frame_period_cam0, eo5_frame_period_cam0;
+    wire [23:0] eo_selected_frame_period_cam0;
+    wire [23:0] eo_stack_hd_period_cam0;
+    wire [31:0] eo_strobe_period_cam0;
+    wire        strobe_out0_sync_cam0;
+
+    FramePeriodCounter #(.WIDTH(24), .START_ON_RISING(0)) u_eo0_period (
+        .rst_n(nRESET), .clk(eo0_pclk), .frame_signal(eo0_vsync),
+        .period_cycles(eo0_frame_period_src), .frame_toggle(eo0_frame_toggle_src)
+    );
+    FramePeriodCounter #(.WIDTH(24), .START_ON_RISING(0)) u_eo1_period (
+        .rst_n(nRESET), .clk(eo1_pclk), .frame_signal(eo1_vsync),
+        .period_cycles(eo1_frame_period_src), .frame_toggle(eo1_frame_toggle_src)
+    );
+    FramePeriodCounter #(.WIDTH(24), .START_ON_RISING(0)) u_eo2_period (
+        .rst_n(nRESET), .clk(eo2_pclk), .frame_signal(eo2_vsync),
+        .period_cycles(eo2_frame_period_src), .frame_toggle(eo2_frame_toggle_src)
+    );
+    FramePeriodCounter #(.WIDTH(24), .START_ON_RISING(0)) u_eo3_period (
+        .rst_n(nRESET), .clk(eo3_pclk), .frame_signal(eo3_vsync),
+        .period_cycles(eo3_frame_period_src), .frame_toggle(eo3_frame_toggle_src)
+    );
+    FramePeriodCounter #(.WIDTH(24), .START_ON_RISING(0)) u_eo4_period (
+        .rst_n(nRESET), .clk(eo4_pclk), .frame_signal(eo4_vsync),
+        .period_cycles(eo4_frame_period_src), .frame_toggle(eo4_frame_toggle_src)
+    );
+    FramePeriodCounter #(.WIDTH(24), .START_ON_RISING(0)) u_eo5_period (
+        .rst_n(nRESET), .clk(eo5_pclk), .frame_signal(eo5_vsync),
+        .period_cycles(eo5_frame_period_src), .frame_toggle(eo5_frame_toggle_src)
+    );
+
+    PeriodCdcCapture #(.WIDTH(24)) u_eo0_period_cdc (
+        .rst_n(nRESET), .dst_clk(CAM0_PCLK_bufg), .src_period(eo0_frame_period_src),
+        .src_toggle(eo0_frame_toggle_src), .dst_period(eo0_frame_period_cam0)
+    );
+    PeriodCdcCapture #(.WIDTH(24)) u_eo1_period_cdc (
+        .rst_n(nRESET), .dst_clk(CAM0_PCLK_bufg), .src_period(eo1_frame_period_src),
+        .src_toggle(eo1_frame_toggle_src), .dst_period(eo1_frame_period_cam0)
+    );
+    PeriodCdcCapture #(.WIDTH(24)) u_eo2_period_cdc (
+        .rst_n(nRESET), .dst_clk(CAM0_PCLK_bufg), .src_period(eo2_frame_period_src),
+        .src_toggle(eo2_frame_toggle_src), .dst_period(eo2_frame_period_cam0)
+    );
+    PeriodCdcCapture #(.WIDTH(24)) u_eo3_period_cdc (
+        .rst_n(nRESET), .dst_clk(CAM0_PCLK_bufg), .src_period(eo3_frame_period_src),
+        .src_toggle(eo3_frame_toggle_src), .dst_period(eo3_frame_period_cam0)
+    );
+    PeriodCdcCapture #(.WIDTH(24)) u_eo4_period_cdc (
+        .rst_n(nRESET), .dst_clk(CAM0_PCLK_bufg), .src_period(eo4_frame_period_src),
+        .src_toggle(eo4_frame_toggle_src), .dst_period(eo4_frame_period_cam0)
+    );
+    PeriodCdcCapture #(.WIDTH(24)) u_eo5_period_cdc (
+        .rst_n(nRESET), .dst_clk(CAM0_PCLK_bufg), .src_period(eo5_frame_period_src),
+        .src_toggle(eo5_frame_toggle_src), .dst_period(eo5_frame_period_cam0)
+    );
+
+    FramePeriodCounter #(.WIDTH(24), .START_ON_RISING(1)) u_eo_stack_hd_period (
+        .rst_n(nRESET), .clk(CAM0_PCLK_bufg), .frame_signal(eo_stack_hd_vsync),
+        .period_cycles(eo_stack_hd_period_cam0), .frame_toggle()
+    );
+
+    EdgePeriodCounter #(.WIDTH(32)) u_strobe_period (
+        .rst_n(nRESET), .clk(CAM0_PCLK_bufg), .async_signal(STROBE_OUT0),
+        .period_cycles(eo_strobe_period_cam0), .sync_signal(strobe_out0_sync_cam0)
+    );
+
+    assign eo_selected_frame_period_cam0 =
+        (eo_sel == 3'd0) ? eo0_frame_period_cam0 :
+        (eo_sel == 3'd1) ? eo1_frame_period_cam0 :
+        (eo_sel == 3'd2) ? eo2_frame_period_cam0 :
+        (eo_sel == 3'd3) ? eo3_frame_period_cam0 :
+        (eo_sel == 3'd4) ? eo4_frame_period_cam0 :
+                           eo5_frame_period_cam0;
+
+    wire [7:0] i2c_dbg_70 = 8'hE0;
+    wire [7:0] i2c_dbg_71 = mode_current;
+    wire [7:0] i2c_dbg_72 = eo_selected_frame_period_cam0[7:0];
+    wire [7:0] i2c_dbg_73 = eo_selected_frame_period_cam0[15:8];
+    wire [7:0] i2c_dbg_74 = eo_selected_frame_period_cam0[23:16];
+    wire [7:0] i2c_dbg_75 = eo0_frame_period_cam0[7:0];
+    wire [7:0] i2c_dbg_76 = eo0_frame_period_cam0[15:8];
+    wire [7:0] i2c_dbg_77 = eo0_frame_period_cam0[23:16];
+    wire [7:0] i2c_dbg_78 = eo_stack_hd_period_cam0[7:0];
+    wire [7:0] i2c_dbg_79 = eo_stack_hd_period_cam0[15:8];
+    wire [7:0] i2c_dbg_7a = eo_stack_hd_period_cam0[23:16];
+    wire [7:0] i2c_dbg_7b = eo_strobe_period_cam0[7:0];
+    wire [7:0] i2c_dbg_7c = eo_strobe_period_cam0[15:8];
+    wire [7:0] i2c_dbg_7d = eo_strobe_period_cam0[23:16];
+    wire [7:0] i2c_dbg_7e = eo_strobe_period_cam0[31:24];
+    wire [7:0] i2c_dbg_7f = {strobe_out0_sync_cam0, eo_stack_mode_active,
+                              eo_single_mode_active, 2'b00, eo_sel};
+
+    assign i2c_debug_status = {
+        i2c_dbg_7f, i2c_dbg_7e, i2c_dbg_7d, i2c_dbg_7c,
+        i2c_dbg_7b, i2c_dbg_7a, i2c_dbg_79, i2c_dbg_78,
+        i2c_dbg_77, i2c_dbg_76, i2c_dbg_75, i2c_dbg_74,
+        i2c_dbg_73, i2c_dbg_72, i2c_dbg_71, i2c_dbg_70
+    };
+
+    // ------------------------------------------------------------------------
     // IR routing
     // ------------------------------------------------------------------------
     wire        IR_SEL_PCLK_MUX_OUT = (ir_sel == 3'd0) ? IRCAM0_PCLK_bufg :
@@ -536,6 +645,111 @@ module KintexTop_EO_IR_Combined_HD_SDI(
     assign IRCAM4_GENLOCK = sig_60hz;
     assign IRCAM5_GENLOCK = sig_60hz;
 
+endmodule
+
+module FramePeriodCounter #(
+    parameter integer WIDTH = 24,
+    parameter integer START_ON_RISING = 0
+)(
+    input  wire             rst_n,
+    input  wire             clk,
+    input  wire             frame_signal,
+    output reg  [WIDTH-1:0] period_cycles,
+    output reg              frame_toggle
+);
+    reg [WIDTH-1:0] cycle_count;
+    reg             frame_signal_d;
+    wire            start_edge = START_ON_RISING ?
+                                 (frame_signal && !frame_signal_d) :
+                                 (frame_signal_d && !frame_signal);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cycle_count    <= {WIDTH{1'b0}};
+            period_cycles  <= {WIDTH{1'b0}};
+            frame_signal_d <= 1'b0;
+            frame_toggle   <= 1'b0;
+        end else begin
+            frame_signal_d <= frame_signal;
+
+            if (start_edge) begin
+                period_cycles <= cycle_count;
+                cycle_count   <= {{(WIDTH-1){1'b0}}, 1'b1};
+                frame_toggle  <= ~frame_toggle;
+            end else if (cycle_count != {WIDTH{1'b1}}) begin
+                cycle_count <= cycle_count + {{(WIDTH-1){1'b0}}, 1'b1};
+            end
+        end
+    end
+endmodule
+
+module PeriodCdcCapture #(
+    parameter integer WIDTH = 24
+)(
+    input  wire             rst_n,
+    input  wire             dst_clk,
+    input  wire [WIDTH-1:0] src_period,
+    input  wire             src_toggle,
+    output reg  [WIDTH-1:0] dst_period
+);
+    reg src_toggle_meta;
+    reg src_toggle_sync;
+    reg src_toggle_sync_d;
+
+    always @(posedge dst_clk or negedge rst_n) begin
+        if (!rst_n) begin
+            src_toggle_meta   <= 1'b0;
+            src_toggle_sync   <= 1'b0;
+            src_toggle_sync_d <= 1'b0;
+            dst_period        <= {WIDTH{1'b0}};
+        end else begin
+            src_toggle_meta   <= src_toggle;
+            src_toggle_sync   <= src_toggle_meta;
+            src_toggle_sync_d <= src_toggle_sync;
+
+            if (src_toggle_sync != src_toggle_sync_d)
+                dst_period <= src_period;
+        end
+    end
+endmodule
+
+module EdgePeriodCounter #(
+    parameter integer WIDTH = 32
+)(
+    input  wire             rst_n,
+    input  wire             clk,
+    input  wire             async_signal,
+    output reg  [WIDTH-1:0] period_cycles,
+    output wire             sync_signal
+);
+    reg [WIDTH-1:0] cycle_count;
+    reg             sig_meta;
+    reg             sig_sync;
+    reg             sig_sync_d;
+    wire            rising_edge = sig_sync && !sig_sync_d;
+
+    assign sync_signal = sig_sync;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            cycle_count   <= {WIDTH{1'b0}};
+            period_cycles <= {WIDTH{1'b0}};
+            sig_meta      <= 1'b0;
+            sig_sync      <= 1'b0;
+            sig_sync_d    <= 1'b0;
+        end else begin
+            sig_meta   <= async_signal;
+            sig_sync   <= sig_meta;
+            sig_sync_d <= sig_sync;
+
+            if (rising_edge) begin
+                period_cycles <= cycle_count;
+                cycle_count   <= {{(WIDTH-1){1'b0}}, 1'b1};
+            end else if (cycle_count != {WIDTH{1'b1}}) begin
+                cycle_count <= cycle_count + {{(WIDTH-1){1'b0}}, 1'b1};
+            end
+        end
+    end
 endmodule
 
 module IR540x480_GrayFrameBuffer #(
@@ -1691,6 +1905,7 @@ module Kintex_top_I2C_test #(
     input  wire SCLK_IN,
     input  wire SCL,
     inout  wire SDA,
+    input  wire [127:0] debug_status,
 	output wire [3:0] cam_select,
     output wire [7:0] mode_out
 );
@@ -1789,6 +2004,7 @@ module Kintex_top_I2C_test #(
     //===========================================================
     (* ram_style = "registers" *) reg [7:0] regfile [0:REG_COUNT-1];
     reg [7:0] reg_index;
+    reg [7:0] read_data_byte;
 
     wire [7:0] mode_reg = regfile[8'h00];
     assign mode_out = mode_reg;
@@ -1813,6 +2029,28 @@ module Kintex_top_I2C_test #(
         (mode_reg <= 8'd5)                      ? mode_reg[3:0] :
         ((mode_reg >= 8'h0D) && (mode_reg <= 8'h12)) ? (mode_reg - 8'h0D) :
                                                   4'd0;
+
+    always @* begin
+        case (reg_index)
+            8'h70: read_data_byte = debug_status[7:0];
+            8'h71: read_data_byte = debug_status[15:8];
+            8'h72: read_data_byte = debug_status[23:16];
+            8'h73: read_data_byte = debug_status[31:24];
+            8'h74: read_data_byte = debug_status[39:32];
+            8'h75: read_data_byte = debug_status[47:40];
+            8'h76: read_data_byte = debug_status[55:48];
+            8'h77: read_data_byte = debug_status[63:56];
+            8'h78: read_data_byte = debug_status[71:64];
+            8'h79: read_data_byte = debug_status[79:72];
+            8'h7A: read_data_byte = debug_status[87:80];
+            8'h7B: read_data_byte = debug_status[95:88];
+            8'h7C: read_data_byte = debug_status[103:96];
+            8'h7D: read_data_byte = debug_status[111:104];
+            8'h7E: read_data_byte = debug_status[119:112];
+            8'h7F: read_data_byte = debug_status[127:120];
+            default: read_data_byte = regfile[reg_index];
+        endcase
+    end
 
     //===========================================================
     // FSM / Shifters
@@ -1949,7 +2187,7 @@ module Kintex_top_I2C_test #(
                             sda_oe <= 1'b0;
                         else
                             // open-drain: 0 drives low, 1 releases
-                            sda_oe <= (regfile[reg_index][bit_cnt] == 1'b0) ? 1'b1 : 1'b0;
+                            sda_oe <= (read_data_byte[bit_cnt] == 1'b0) ? 1'b1 : 1'b0;
                     end
 
                     ST_READ_ACK:  sda_oe <= 1'b0; // master drives ACK/NACK
