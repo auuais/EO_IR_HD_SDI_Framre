@@ -2045,6 +2045,21 @@ module Kintex_top_I2C_test #(
     // 8-bit address accesses continue to behave as a simple byte register file.
     //===========================================================
     (* ram_style = "registers" *) reg [7:0] regfile [0:REG_COUNT-1];
+    localparam [7:0] DEFAULT_MODE = 8'h15; // EO stack
+
+    // Power-on (configuration-time) INIT of the register file. Vivado bakes
+    // these values into the flop INIT bits, so regfile[0] comes up as EO stack
+    // the instant the FPGA finishes configuration -- before the async POR reset
+    // logic runs and before the host MCU writes anything over I2C. Combined with
+    // the reset-branch assignment below, the boot image is EO_Stack regardless
+    // of reset/host timing.
+    integer init_idx;
+    initial begin
+        for (init_idx = 0; init_idx < REG_COUNT; init_idx = init_idx + 1)
+            regfile[init_idx] = 8'h00;
+        regfile[8'h00] = DEFAULT_MODE;
+    end
+
     reg [7:0] reg_index;
     reg [7:0] read_data_byte;
 
@@ -2190,6 +2205,7 @@ module Kintex_top_I2C_test #(
 
             for (idx = 0; idx < REG_COUNT; idx = idx + 1)
                 regfile[idx] <= 8'h00;
+            regfile[8'h00] <= DEFAULT_MODE;
 
             sda_oe <= 1'b0;
 
